@@ -13,6 +13,73 @@ from backend.utils import find_images, thumb_from_face, rel_to
 
 from backend.cluster import Clusterer
 
+
+class ThumbnailResultsDialog(QtWidgets.QDialog):
+    """Simple scrollable grid dialog that shows thumbnails for search results.
+
+    results: list of (similarity, abs_path, bbox)
+    Clicking a thumbnail opens the image with the OS default viewer.
+    """
+    def __init__(self, parent, results, thumb_size=120, cols=6):
+        super().__init__(parent)
+        self.setWindowTitle('Find Person - Matches')
+        self.resize(900, 600)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        info = QtWidgets.QLabel(f'Showing top {len(results)} matches')
+        layout.addWidget(info)
+
+        scroll = QtWidgets.QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        w = QtWidgets.QWidget()
+        grid = QtWidgets.QGridLayout(w)
+
+        r = c = 0
+        for sim, path, bbox in results:
+            try:
+                from PIL import Image
+                img = Image.open(path).convert('RGB')
+                thumb = thumb_from_face(img, bbox, size=thumb_size)
+                data = thumb.tobytes('raw', 'RGB')
+                qimg = QtGui.QImage(data, thumb.width, thumb.height, QtGui.QImage.Format.Format_RGB888)
+                pix = QtGui.QPixmap.fromImage(qimg)
+
+                btn = QtWidgets.QPushButton()
+                icon = QtGui.QIcon(pix)
+                btn.setIcon(icon)
+                btn.setIconSize(pix.size())
+                btn.setToolTip(f"{sim:.3f}  {os.path.basename(path)}")
+                # store path on the widget and open on click
+                btn._path = path
+                btn.clicked.connect(lambda _checked, p=path: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(p)))
+
+                v = QtWidgets.QVBoxLayout()
+                v.addWidget(btn)
+                lbl = QtWidgets.QLabel(f"{sim:.3f}")
+                lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                v.addWidget(lbl)
+
+                container = QtWidgets.QWidget()
+                container.setLayout(v)
+                grid.addWidget(container, r, c)
+                c += 1
+                if c >= cols:
+                    c = 0
+                    r += 1
+            except Exception:
+                # skip images that fail to load
+                continue
+
+        scroll.setWidget(w)
+        layout.addWidget(scroll)
+        btns = QtWidgets.QHBoxLayout()
+        close = QtWidgets.QPushButton('Close')
+        close.clicked.connect(self.accept)
+        btns.addStretch()
+        btns.addWidget(close)
+        layout.addLayout(btns)
+
+
 class Indexer(QtCore.QThread):
     progress = QtCore.pyqtSignal(int, int, str)
     finished = QtCore.pyqtSignal(int)
@@ -153,12 +220,12 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
         results.sort(key=lambda x: -x[0])
-        top = results[:20]
+        top = results[:50]
         if not top:
             QtWidgets.QMessageBox.information(self, 'Find Person', 'No matches found.')
             return
-        msg = '\n'.join([f'{s:.3f}  {os.path.basename(p)}' for s,p,_ in top])
-        QtWidgets.QMessageBox.information(self, 'Find Person - Top matches', msg)
+        dlg = ThumbnailResultsDialog(self, top)
+        dlg.exec()
 
     def on_scan(self):
         dlg = QtWidgets.QFileDialog(self)
