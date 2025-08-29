@@ -55,7 +55,9 @@ class ThumbnailResultsDialog(QtWidgets.QDialog):
 
                 v = QtWidgets.QVBoxLayout()
                 v.addWidget(btn)
-                lbl = QtWidgets.QLabel(f"{sim:.3f}")
+                # show filename caption instead of numeric score
+                fname = os.path.basename(path)
+                lbl = QtWidgets.QLabel(fname)
                 lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
                 v.addWidget(lbl)
 
@@ -220,9 +222,12 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
         results.sort(key=lambda x: -x[0])
-        top = results[:50]
+        # filter by similarity threshold to avoid returning every image
+        threshold = 0.50  # show matches with cosine similarity >= threshold
+        filtered = [r for r in results if r[0] >= threshold]
+        top = filtered[:50]
         if not top:
-            QtWidgets.QMessageBox.information(self, 'Find Person', 'No matches found.')
+            QtWidgets.QMessageBox.information(self, 'Find Person', 'No matches found above similarity threshold (0.50). Try a different reference photo or lower the threshold in settings.')
             return
         dlg = ThumbnailResultsDialog(self, top)
         dlg.exec()
