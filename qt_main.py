@@ -33,6 +33,9 @@ class ThumbnailResultsDialog(QtWidgets.QDialog):
         scroll.setWidgetResizable(True)
         w = QtWidgets.QWidget()
         grid = QtWidgets.QGridLayout(w)
+        # tighten spacing so thumbnails are close together
+        grid.setSpacing(6)
+        grid.setContentsMargins(6, 6, 6, 6)
 
         r = c = 0
         for sim, path, bbox in results:
@@ -67,7 +70,12 @@ class ThumbnailResultsDialog(QtWidgets.QDialog):
                 painter.end()
 
                 btn = QtWidgets.QPushButton()
-                btn.setFixedSize(thumb_size + 10, thumb_size + 30)
+                # remove visible button chrome and focus border
+                btn.setFlat(True)
+                btn.setStyleSheet('border: none; padding: 0; margin: 0;')
+                btn.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+                btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+                btn.setFixedSize(thumb_size, thumb_size)
                 icon = QtGui.QIcon(canvas)
                 btn.setIcon(icon)
                 btn.setIconSize(QtCore.QSize(thumb_size, thumb_size))
@@ -76,7 +84,9 @@ class ThumbnailResultsDialog(QtWidgets.QDialog):
                 btn.clicked.connect(lambda _checked, p=path: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(p)))
 
                 v = QtWidgets.QVBoxLayout()
-                v.setContentsMargins(4, 4, 4, 4)
+                # zero margins so items sit tightly together
+                v.setContentsMargins(0, 2, 0, 2)
+                v.setSpacing(2)
                 v.addWidget(btn)
                 fname = os.path.basename(path)
                 lbl = QtWidgets.QLabel(fname)
@@ -85,6 +95,8 @@ class ThumbnailResultsDialog(QtWidgets.QDialog):
 
                 container = QtWidgets.QWidget()
                 container.setLayout(v)
+                container.setContentsMargins(0, 0, 0, 0)
+                container.setStyleSheet('background: transparent;')
                 grid.addWidget(container, r, c)
                 c += 1
                 if c >= cols:
