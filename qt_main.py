@@ -37,25 +37,47 @@ class ThumbnailResultsDialog(QtWidgets.QDialog):
         r = c = 0
         for sim, path, bbox in results:
             try:
-                from PIL import Image
-                img = Image.open(path).convert('RGB')
-                thumb = thumb_from_face(img, bbox, size=thumb_size)
-                data = thumb.tobytes('raw', 'RGB')
-                qimg = QtGui.QImage(data, thumb.width, thumb.height, QtGui.QImage.Format.Format_RGB888)
+                import cv2
+                arr = cv2.imread(path)
+                if arr is None:
+                    continue
+                # face_engine uses cv2 coordinates (x1,y1,x2,y2)
+                x1, y1, x2, y2 = bbox
+                h_img, w_img = arr.shape[:2]
+                x1 = max(0, int(x1)); y1 = max(0, int(y1)); x2 = min(w_img, int(x2)); y2 = min(h_img, int(y2))
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                face = arr[y1:y2, x1:x2]
+                face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+                fh, fw = face_rgb.shape[:2]
+
+                # convert to QImage
+                bytes_per_line = fw * 3
+                qimg = QtGui.QImage(face_rgb.data, fw, fh, bytes_per_line, QtGui.QImage.Format.Format_RGB888).copy()
                 pix = QtGui.QPixmap.fromImage(qimg)
 
+                # scale while keeping aspect ratio, then center on a square canvas
+                scaled = pix.scaled(thumb_size, thumb_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
+                canvas = QtGui.QPixmap(thumb_size, thumb_size)
+                canvas.fill(QtGui.QColor('#f5f5f5'))
+                painter = QtGui.QPainter(canvas)
+                xoff = (thumb_size - scaled.width()) // 2
+                yoff = (thumb_size - scaled.height()) // 2
+                painter.drawPixmap(xoff, yoff, scaled)
+                painter.end()
+
                 btn = QtWidgets.QPushButton()
-                icon = QtGui.QIcon(pix)
+                btn.setFixedSize(thumb_size + 10, thumb_size + 30)
+                icon = QtGui.QIcon(canvas)
                 btn.setIcon(icon)
-                btn.setIconSize(pix.size())
-                btn.setToolTip(f"{sim:.3f}  {os.path.basename(path)}")
-                # store path on the widget and open on click
+                btn.setIconSize(QtCore.QSize(thumb_size, thumb_size))
+                btn.setToolTip(f"{os.path.basename(path)}")
                 btn._path = path
                 btn.clicked.connect(lambda _checked, p=path: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(p)))
 
                 v = QtWidgets.QVBoxLayout()
+                v.setContentsMargins(4, 4, 4, 4)
                 v.addWidget(btn)
-                # show filename caption instead of numeric score
                 fname = os.path.basename(path)
                 lbl = QtWidgets.QLabel(fname)
                 lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -69,7 +91,6 @@ class ThumbnailResultsDialog(QtWidgets.QDialog):
                     c = 0
                     r += 1
             except Exception:
-                # skip images that fail to load
                 continue
 
         scroll.setWidget(w)
