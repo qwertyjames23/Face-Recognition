@@ -21,3 +21,21 @@ Status: WIP (open source) • License: MIT
 - SQLite – local metadata DB (faces.db)
 
 Note: You can swap in any face model/engine under backend/face_engine.py.
+
+## 💖 Support
+
+If you find this project useful, consider supporting its development:
+
+- 💸 [PayPal](https://paypal.me/RaffyjamesAdams)
+
+Your support helps me maintain and improve this project. 🙏
+
+### 🇵🇭 GCash (QR)
+
+You can also support the project via GCash by scanning the QR below.
+
+Place your QR image file at `assets/gcash-qr.png` and it will be displayed here:
+
+![GCash QR](assets/gcash-qr.png)
+
+If you prefer, include a payment note or phone number in the image filename or the repository README.
