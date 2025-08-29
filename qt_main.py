@@ -1,6 +1,7 @@
 import sys
 import os
 from PyQt6 import QtWidgets, QtGui, QtCore
+import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.join(HERE, 'backend')
@@ -22,6 +23,9 @@ class Indexer(QtCore.QThread):
         self.engine = engine
         self.folder = folder
         self._stop = False
+
+    def stop(self):
+        self._stop = True
 
     def run(self):
         images = find_images(self.folder)
@@ -67,22 +71,94 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar = QtWidgets.QToolBar()
         self.addToolBar(toolbar)
 
-        btn_scan = QtWidgets.QAction('Scan Folder', self)
-        btn_people = QtWidgets.QAction('People', self)
+        # create actions
+        btn_find = QtGui.QAction('Find Person', self)
+        btn_scan = QtGui.QAction('Scan Folder', self)
+        btn_people = QtGui.QAction('People', self)
+        btn_export = QtGui.QAction('Export Matches', self)
+        btn_cancel = QtGui.QAction('Cancel', self)
+        toolbar.addAction(btn_find)
         toolbar.addAction(btn_scan)
         toolbar.addAction(btn_people)
+        toolbar.addAction(btn_export)
+        toolbar.addAction(btn_cancel)
 
-    self.status = QtWidgets.QStatusBar()
-    self.setStatusBar(self.status)
+        # status bar and DB should be initialized as part of the window
+        self.status = QtWidgets.QStatusBar()
+        self.setStatusBar(self.status)
 
-    self.db = FaceDB(os.path.join(HERE, 'faces.db'))
-    # lazy-load FaceEngine because importing insightface/onnxruntime
-    # can raise a DLL import error on some systems. We'll create it
-    # only when a scan is requested.
-    self.engine = None
+        self.db = FaceDB(os.path.join(HERE, 'faces.db'))
+        # lazy-load FaceEngine because importing insightface/onnxruntime
+        # can raise a DLL import error on some systems. We'll create it
+        # only when a scan is requested.
+        self.engine = None
 
-    btn_scan.triggered.connect(self.on_scan)
-    btn_people.triggered.connect(self.on_people)
+        # wire actions
+        btn_scan.triggered.connect(self.on_scan)
+        btn_people.triggered.connect(self.on_people)
+        btn_find.triggered.connect(self.on_find_person)
+        btn_export.triggered.connect(self.on_people)
+        btn_cancel.triggered.connect(self.on_cancel)
+
+        # indexer placeholder
+        self._indexer = None
+
+    def on_cancel(self):
+        # Stop any running indexer thread
+        if self._indexer is not None:
+            try:
+                self._indexer.stop()
+                self.status.showMessage('Cancelling...')
+            except Exception:
+                pass
+
+    def on_find_person(self):
+        # Quick find: pick reference photo and folder, then scan folder for similar faces
+        engine = self._get_engine()
+        if engine is None:
+            QtWidgets.QMessageBox.critical(self, 'Error', 'Face engine could not be loaded. Check onnxruntime and insightface installation.')
+            return
+        ref_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Choose reference photo', filter='Images (*.jpg *.jpeg *.png *.bmp *.webp)')
+        if not ref_path:
+            return
+        try:
+            dets = engine.extract_faces(ref_path)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, 'Error', f'Failed to read reference: {e}')
+            return
+        if not dets:
+            QtWidgets.QMessageBox.information(self, 'Find Person', 'No face found in the reference photo.')
+            return
+        # use largest face
+        def area(b):
+            x,y,w,h = b
+            return max(0,w)*max(0,h)
+        det = max(dets, key=lambda d: area(d['bbox']))
+        ref_emb = np.array(det['embedding'], dtype=np.float32)
+
+        folder = QtWidgets.QFileDialog.getExistingDirectory(self, 'Choose folder to scan for this person')
+        if not folder:
+            return
+
+        imgs = find_images(folder)
+        results = []
+        for img in imgs:
+            try:
+                ds = engine.extract_faces(img)
+                for d in ds:
+                    emb = np.array(d['embedding'], dtype=np.float32)
+                    # cosine similarity
+                    sim = float((ref_emb * emb).sum() / (np.linalg.norm(ref_emb) * np.linalg.norm(emb) + 1e-9))
+                    results.append((sim, img, d['bbox']))
+            except Exception:
+                pass
+        results.sort(key=lambda x: -x[0])
+        top = results[:20]
+        if not top:
+            QtWidgets.QMessageBox.information(self, 'Find Person', 'No matches found.')
+            return
+        msg = '\n'.join([f'{s:.3f}  {os.path.basename(p)}' for s,p,_ in top])
+        QtWidgets.QMessageBox.information(self, 'Find Person - Top matches', msg)
 
     def on_scan(self):
         dlg = QtWidgets.QFileDialog(self)
