@@ -160,6 +160,23 @@ class FaceDB:
             rows = cur.fetchall()
         return [{"bbox": json.loads(b), "abs_path": p} for (b, p) in rows]
 
+    def get_recent_faces(self, limit: int = 50):
+        """Return the most recently added faces (by face id) as a list of dicts
+        containing 'bbox' and 'abs_path'. This is useful to preview faces
+        immediately after an indexing run.
+        """
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT f.bbox, i.abs_path
+                FROM faces f
+                JOIN images i ON i.id = f.image_id
+                ORDER BY f.id DESC
+                LIMIT ?
+            """, (limit,))
+            rows = cur.fetchall()
+        return [{"bbox": json.loads(b), "abs_path": p} for (b, p) in rows]
+
     # ---------- Suggestions ----------
     def _cluster_centroid(self, cluster_id: int):
         with self.lock:

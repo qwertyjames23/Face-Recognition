@@ -40,8 +40,25 @@ class PeopleDialog(QtWidgets.QDialog):
     def refresh(self):
         self.list.clear()
         rows = self.db.list_clusters()
-        for cid, label, cnt in rows:
-            self.list.addItem(f'{cid}: {label} ({cnt})')
+        if not rows:
+            # show a non-selectable placeholder so the dialog isn't filled with stale entries
+            item = QtWidgets.QListWidgetItem('(No people indexed yet — scan a folder)')
+            # remove selection/interaction flags
+            item.setFlags(QtCore.Qt.ItemFlag(0))
+            self.list.addItem(item)
+            # disable action buttons until there are real entries
+            self.btn_view.setEnabled(False)
+            self.btn_rename.setEnabled(False)
+            self.btn_merge.setEnabled(False)
+            self.btn_export.setEnabled(False)
+        else:
+            for cid, label, cnt in rows:
+                self.list.addItem(f'{cid}: {label} ({cnt})')
+            # enable action buttons
+            self.btn_view.setEnabled(True)
+            self.btn_rename.setEnabled(True)
+            self.btn_merge.setEnabled(True)
+            self.btn_export.setEnabled(True)
 
     def _get_selected_ids(self):
         out = []

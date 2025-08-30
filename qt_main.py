@@ -205,6 +205,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # indexer placeholder
         self._indexer = None
 
+        # central preview area: a scrollable widget where we can show thumbnails
+        self._preview_scroll = QtWidgets.QScrollArea()
+        self._preview_scroll.setWidgetResizable(True)
+        self._preview_widget = QtWidgets.QWidget()
+        self._preview_layout = QtWidgets.QGridLayout(self._preview_widget)
+        self._preview_layout.setSpacing(6)
+        self._preview_layout.setContentsMargins(6, 6, 6, 6)
+        self._preview_scroll.setWidget(self._preview_widget)
+        # start with an empty placeholder central widget
+        placeholder = QtWidgets.QLabel('No previews yet. Use Scan Folder to index images and see previews here.')
+        placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.setCentralWidget(placeholder)
+
     def on_cancel(self):
         # Stop any running indexer thread
         if self._indexer is not None:
@@ -262,8 +275,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not top:
             QtWidgets.QMessageBox.information(self, 'Find Person', 'No matches found above similarity threshold (0.50). Try a different reference photo or lower the threshold in settings.')
             return
-        dlg = ThumbnailResultsDialog(self, top)
-        dlg.exec()
+        # show results on the main page preview area instead of opening a dialog
+        self.status.showMessage(f'Found {len(top)} matches — showing on main page')
+        self.show_results_on_main(top)
 
     def on_scan(self):
         dlg = QtWidgets.QFileDialog(self)
@@ -300,8 +314,162 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_index_finished(self, added):
         self.status.showMessage(f'Indexing complete. Faces added: {added}')
-        # open people dialog automatically
-        QtCore.QTimer.singleShot(100, self.on_people)
+        # show recently added faces on the main page instead of opening a new dialog
+        QtCore.QTimer.singleShot(100, lambda: self.show_recent_faces_preview())
+
+    def show_recent_faces_preview(self, limit: int = 48, thumb_size: int = 120, cols: int = 6):
+        try:
+            faces = self.db.get_recent_faces(limit)
+        except Exception:
+            faces = []
+
+        # clear existing layout
+        while self._preview_layout.count():
+            it = self._preview_layout.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.setParent(None)
+
+        r = c = 0
+        for item in faces:
+            path = item.get('abs_path')
+            bbox = item.get('bbox')
+            try:
+                import cv2
+                arr = cv2.imread(path)
+                if arr is None:
+                    continue
+                x1, y1, x2, y2 = bbox
+                h_img, w_img = arr.shape[:2]
+                x1 = max(0, int(x1)); y1 = max(0, int(y1)); x2 = min(w_img, int(x2)); y2 = min(h_img, int(y2))
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                face = arr[y1:y2, x1:x2]
+                face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+                fh, fw = face_rgb.shape[:2]
+
+                bytes_per_line = fw * 3
+                qimg = QtGui.QImage(face_rgb.data, fw, fh, bytes_per_line, QtGui.QImage.Format.Format_RGB888).copy()
+                pix = QtGui.QPixmap.fromImage(qimg)
+                scaled = pix.scaled(thumb_size, thumb_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
+                canvas = QtGui.QPixmap(thumb_size, thumb_size)
+                canvas.fill(QtGui.QColor('#f5f5f5'))
+                painter = QtGui.QPainter(canvas)
+                xoff = (thumb_size - scaled.width()) // 2
+                yoff = (thumb_size - scaled.height()) // 2
+                painter.drawPixmap(xoff, yoff, scaled)
+                painter.end()
+
+                btn = QtWidgets.QPushButton()
+                btn.setFlat(True)
+                btn.setStyleSheet('border: none; padding: 0; margin: 0;')
+                btn.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+                btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+                btn.setFixedSize(thumb_size, thumb_size)
+                icon = QtGui.QIcon(canvas)
+                btn.setIcon(icon)
+                btn.setIconSize(QtCore.QSize(thumb_size, thumb_size))
+                btn.setToolTip(f"{os.path.basename(path)}")
+                btn._path = path
+                btn.clicked.connect(lambda _checked, p=path: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(p)))
+
+                v = QtWidgets.QVBoxLayout()
+                v.setContentsMargins(0, 2, 0, 2)
+                v.setSpacing(2)
+                v.addWidget(btn)
+                lbl = QtWidgets.QLabel(os.path.basename(path))
+                lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                v.addWidget(lbl)
+
+                container = QtWidgets.QWidget()
+                container.setLayout(v)
+                container.setContentsMargins(0, 0, 0, 0)
+                container.setStyleSheet('background: transparent;')
+                self._preview_layout.addWidget(container, r, c)
+                c += 1
+                if c >= cols:
+                    c = 0
+                    r += 1
+            except Exception:
+                continue
+
+        # place the preview scroll area as the central widget
+        self._preview_widget.adjustSize()
+        self.setCentralWidget(self._preview_scroll)
+
+    def show_results_on_main(self, results, thumb_size: int = 120, cols: int = 6):
+        """Render a list of search results (sim, path, bbox) into the main preview area."""
+        # clear existing layout
+        while self._preview_layout.count():
+            it = self._preview_layout.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.setParent(None)
+
+        r = c = 0
+        for sim, path, bbox in results:
+            try:
+                import cv2
+                arr = cv2.imread(path)
+                if arr is None:
+                    continue
+                x1, y1, x2, y2 = bbox
+                h_img, w_img = arr.shape[:2]
+                x1 = max(0, int(x1)); y1 = max(0, int(y1)); x2 = min(w_img, int(x2)); y2 = min(h_img, int(y2))
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                face = arr[y1:y2, x1:x2]
+                face_rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+                fh, fw = face_rgb.shape[:2]
+
+                bytes_per_line = fw * 3
+                qimg = QtGui.QImage(face_rgb.data, fw, fh, bytes_per_line, QtGui.QImage.Format.Format_RGB888).copy()
+                pix = QtGui.QPixmap.fromImage(qimg)
+                scaled = pix.scaled(thumb_size, thumb_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
+                canvas = QtGui.QPixmap(thumb_size, thumb_size)
+                canvas.fill(QtGui.QColor('#f5f5f5'))
+                painter = QtGui.QPainter(canvas)
+                xoff = (thumb_size - scaled.width()) // 2
+                yoff = (thumb_size - scaled.height()) // 2
+                painter.drawPixmap(xoff, yoff, scaled)
+                painter.end()
+
+                btn = QtWidgets.QPushButton()
+                btn.setFlat(True)
+                btn.setStyleSheet('border: none; padding: 0; margin: 0;')
+                btn.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+                btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+                btn.setFixedSize(thumb_size, thumb_size)
+                icon = QtGui.QIcon(canvas)
+                btn.setIcon(icon)
+                btn.setIconSize(QtCore.QSize(thumb_size, thumb_size))
+                btn.setToolTip(f"{os.path.basename(path)} — {sim:.3f}")
+                btn._path = path
+                btn.clicked.connect(lambda _checked, p=path: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(p)))
+
+                v = QtWidgets.QVBoxLayout()
+                v.setContentsMargins(0, 2, 0, 2)
+                v.setSpacing(2)
+                v.addWidget(btn)
+                lbl = QtWidgets.QLabel(os.path.basename(path))
+                lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                v.addWidget(lbl)
+
+                container = QtWidgets.QWidget()
+                container.setLayout(v)
+                container.setContentsMargins(0, 0, 0, 0)
+                container.setStyleSheet('background: transparent;')
+                self._preview_layout.addWidget(container, r, c)
+                c += 1
+                if c >= cols:
+                    c = 0
+                    r += 1
+            except Exception:
+                continue
+
+        # place the preview scroll area as the central widget
+        self._preview_widget.adjustSize()
+        self.setCentralWidget(self._preview_scroll)
 
     def on_people(self):
         from qt_people import PeopleDialog
